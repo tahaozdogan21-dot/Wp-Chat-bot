@@ -387,6 +387,28 @@ async function startBot() {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // Mesaj durum takibi (ACK): sendMessage'in donus degeri hep PENDING'dir,
+  // mesajin WhatsApp sunucusuna ulasip ulasmadigini / karsi tarafa iletilip
+  // iletilmedigini gormek icin bu event'i dinlemek gerekir.
+  // ---------------------------------------------------------------------------
+  const ACK_DURUMU = {
+    0: 'ERROR',
+    1: 'PENDING',
+    2: 'SERVER_ACK',   // WhatsApp sunucusuna ulasti
+    3: 'DELIVERY_ACK',  // Karsi tarafin cihazina iletildi
+    4: 'READ',          // Karsi taraf okudu
+    5: 'PLAYED',        // Sesli mesaj dinlendi
+  };
+
+  sock.ev.on('messages.update', (updates) => {
+    for (const { key, update } of updates) {
+      if (update.status === undefined) continue;
+      const durum = ACK_DURUMU[update.status] ?? update.status;
+      console.log(`[ACK] JID: ${key.remoteJid} MessageID: ${key.id} -> Durum: ${durum}`);
+    }
+  });
+
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
 
