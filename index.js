@@ -227,9 +227,12 @@ async function islemGoster(sock, jid, birlesikMetin) {
 
   let yanit;
   try {
+    console.log('-> Claude APIye istek gonderiliyor, JID:', jid, 'Mesaj:', birlesikMetin);
     yanit = await askClaude(session.conversation, SYSTEM_PROMPT);
+    console.log('<- Claude APIden yanit basariyla alindi. Yanit uzunlugu:', yanit ? yanit.length : 0);
+    console.log('<- Claude Yaniti:', yanit);
   } catch (err) {
-    console.error('Claude hatasi:', err.message);
+    console.error('Claude hatasi yakalandi:', err.message);
     await insanGibiGonder(sock, jid, 'Şu an teknik bir sorun var, birazdan tekrar yazabilir misiniz?');
     session.conversation.pop(); // basarisiz turu gecmisten cikar
     return;
@@ -312,16 +315,6 @@ app.listen(PORT, () => {
 
 // ---------------------------------------------------------------------------
 // Baileys ile WhatsApp baglantisi
-//
-// ONEMLI (DUZELTME): Onceki surumde baglanti her kapandiginda startBot()
-// hicbir gecikme ve temizlik yapilmadan aninda tekrar cagriliyordu. Bu,
-// WhatsApp'in ayni oturumun ust uste baglanmaya calistigini algilayip
-// "conflict" (440) hatasiyla surekli dusurmesine, boylece baglantinin hic
-// stabillesememesine yol aciyordu. Asagida:
-//   1) Eski socket'in event listener'lari temizleniyor (removeAllListeners),
-//   2) Yeniden baglanmadan once birkac saniye bekleniyor (backoff),
-//   3) Ust uste tetiklenen birden fazla reconnect'i engellemek icin
-//      "reconnecting" bayragi kullaniliyor.
 // ---------------------------------------------------------------------------
 let isReconnecting = false;
 let currentSock = null;
@@ -360,14 +353,9 @@ async function startBot() {
       const conflict = statusCode === DisconnectReason.connectionReplaced || statusCode === 440;
       console.log('Bağlantı kapandı.', statusCode, '- Çıkış yapıldı mı:', loggedOut, '- Çakışma mı:', conflict);
 
-      // Bu socket artik olu; ayni socket'ten tekrar 'close'/'connection.update'
-      // tetiklenip ikinci bir reconnect baslatmasin diye tum dinleyicilerini
-      // temizliyoruz.
       sock.ev.removeAllListeners();
 
       if (isReconnecting) {
-        // Zaten baska bir reconnect siradaysa tekrar baslatma (asil "firtinayi"
-        // engelleyen kisim burasi).
         return;
       }
       isReconnecting = true;
@@ -378,13 +366,9 @@ async function startBot() {
         clearSession()
           .catch((err) => console.error('Oturum temizlenirken hata:', err))
           .finally(() => {
-            // Cikis sonrasi da aninda degil, kisa bir gecikmeyle yeniden baslat.
             setTimeout(() => startBot(), 3000);
           });
       } else if (conflict) {
-        // Cakisma (440) durumunda hemen tekrar denemek ayni cakismayi
-        // tetikler; daha uzun bekle ki WhatsApp tarafindaki eski oturum
-        // gercekten kapansin.
         connectionStatus = 'Çakışma tespit edildi, bekleniyor...';
         setTimeout(() => startBot(), 10000);
       } else {
@@ -400,7 +384,7 @@ async function startBot() {
     for (const msg of messages) {
       if (!msg.message) continue;
       if (msg.key.fromMe) continue;
-      if (msg.key.remoteJid?.endsWith('@g.us')) continue; // grup mesajlarini yoksay
+      if (msg.key.remoteJid?.endsWith('@g.us')) continue;
       if (msg.key.remoteJid === 'status@broadcast') continue;
 
       const jid = msg.key.remoteJid;
@@ -410,7 +394,7 @@ async function startBot() {
         msg.message.imageMessage?.caption ||
         '';
 
-      if (!text) continue; // sadece metin/caption isliyoruz
+      if (!text) continue;
 
       mesajPlanla(jid, text, sock);
     }
