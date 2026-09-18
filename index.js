@@ -312,7 +312,20 @@ app.listen(PORT, () => {
 
 // ---------------------------------------------------------------------------
 // Baileys ile WhatsApp baglantisi
+//
+// ONEMLI (DUZELTME): Onceki surumde baglanti her kapandiginda startBot()
+// hicbir gecikme ve temizlik yapilmadan aninda tekrar cagriliyordu. Bu,
+// WhatsApp'in ayni oturumun ust uste baglanmaya calistigini algilayip
+// "conflict" (440) hatasiyla surekli dusurmesine, boylece baglantinin hic
+// stabillesememesine yol aciyordu. Asagida:
+//   1) Eski socket'in event listener'lari temizleniyor (removeAllListeners),
+//   2) Yeniden baglanmadan once birkac saniye bekleniyor (backoff),
+//   3) Ust uste tetiklenen birden fazla reconnect'i engellemek icin
+//      "reconnecting" bayragi kullaniliyor.
 // ---------------------------------------------------------------------------
+let isReconnecting = false;
+let currentSock = null;
+
 async function startBot() {
   const { state, saveCreds, clearSession } = await usePostgresAuthState();
   const { version } = await fetchLatestBaileysVersion();
@@ -322,6 +335,7 @@ async function startBot() {
     auth: state,
     logger: pino({ level: 'silent' }),
   });
+  currentSock = sock;
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -334,6 +348,7 @@ async function startBot() {
     }
 
     if (connection === 'open') {
+      isReconnecting = false;
       connectionStatus = 'Bağlandı';
       latestQR = null;
       console.log('WhatsApp bağlantısı başarılı.');
@@ -342,17 +357,39 @@ async function startBot() {
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const loggedOut = statusCode === DisconnectReason.loggedOut;
-      console.log('Bağlantı kapandı.', statusCode, '- Çıkış yapıldı mı:', loggedOut);
+      const conflict = statusCode === DisconnectReason.connectionReplaced || statusCode === 440;
+      console.log('Bağlantı kapandı.', statusCode, '- Çıkış yapıldı mı:', loggedOut, '- Çakışma mı:', conflict);
+
+      // Bu socket artik olu; ayni socket'ten tekrar 'close'/'connection.update'
+      // tetiklenip ikinci bir reconnect baslatmasin diye tum dinleyicilerini
+      // temizliyoruz.
+      sock.ev.removeAllListeners();
+
+      if (isReconnecting) {
+        // Zaten baska bir reconnect siradaysa tekrar baslatma (asil "firtinayi"
+        // engelleyen kisim burasi).
+        return;
+      }
+      isReconnecting = true;
 
       if (loggedOut) {
         connectionStatus = 'Çıkış yapıldı, yeni QR hazırlanıyor...';
         latestQR = null;
         clearSession()
           .catch((err) => console.error('Oturum temizlenirken hata:', err))
-          .finally(() => startBot());
+          .finally(() => {
+            // Cikis sonrasi da aninda degil, kisa bir gecikmeyle yeniden baslat.
+            setTimeout(() => startBot(), 3000);
+          });
+      } else if (conflict) {
+        // Cakisma (440) durumunda hemen tekrar denemek ayni cakismayi
+        // tetikler; daha uzun bekle ki WhatsApp tarafindaki eski oturum
+        // gercekten kapansin.
+        connectionStatus = 'Çakışma tespit edildi, bekleniyor...';
+        setTimeout(() => startBot(), 10000);
       } else {
         connectionStatus = 'Bağlantı koptu, yeniden bağlanılıyor...';
-        startBot();
+        setTimeout(() => startBot(), 5000);
       }
     }
   });
