@@ -122,7 +122,7 @@ async function urunGorselleriGonder(sock, jid, kodlar) {
       continue;
     }
     try {
-      await sock.sendMessage(jid, { image: fs.readFileSync(yol) }, { remoteJid: jid });
+      await sock.sendMessage(jid, { image: fs.readFileSync(yol) });
     } catch (err) {
       console.error('Gorsel gonderilemedi:', kod, err.message);
     }
@@ -271,7 +271,7 @@ async function insanGibiGonder(sock, jid, text) {
     // yoksay
   }
   await rastgeleBekle(1, 3);
-  await sock.sendMessage(jid, { text }, { remoteJid: jid });
+  await sock.sendMessage(jid, { text });
   await sock.sendPresenceUpdate('paused', jid).catch(() => {});
 }
 
@@ -387,8 +387,16 @@ async function startBot() {
       if (msg.key.remoteJid?.endsWith('@g.us')) continue;
       if (msg.key.remoteJid === 'status@broadcast') continue;
 
-      // LID yerine varsa gerçek telefon JID'sini (remoteJidAlt) kullanıyoruz
-      const jid = msg.key.remoteJidAlt || msg.key.remoteJid;
+      let jid = msg.key.remoteJid;
+      if (jid.endsWith('@lid') && sock.signalRepository) {
+        try {
+          const lidData = await sock.signalRepository.lidMapping?.getJidForLid?.(jid);
+          if (lidData) jid = lidData;
+        } catch (e) {
+          // yoksay
+        }
+      }
+
       const text =
         msg.message.conversation ||
         msg.message.extendedTextMessage?.text ||
