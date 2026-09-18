@@ -402,6 +402,8 @@ async function startBot() {
   };
 
   sock.ev.on('messages.update', (updates) => {
+    // GECICI DEBUG: event hic tetikleniyor mu, neyle tetikleniyor - hepsini gor.
+    console.log('[ACK-DEBUG] messages.update tetiklendi, adet:', updates.length, JSON.stringify(updates));
     for (const { key, update } of updates) {
       if (update.status === undefined) continue;
       const durum = ACK_DURUMU[update.status] ?? update.status;
