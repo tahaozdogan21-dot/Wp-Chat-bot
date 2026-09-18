@@ -66,7 +66,7 @@ function resetSession(jid) {
 // algilanip hesabin kisitlanmasina yol acabilir, bu yuzden global bir
 // kuyruk uzerinden sirayla islenir).
 // ---------------------------------------------------------------------------
-const pending = {}; // jid -> { texts: [], timer }
+const pending = {}; // jid -> { texts: [], timer, displayNumber }
 const MESAJ_BEKLEME_MS = 8000;
 let islemKuyrugu = Promise.resolve();
 
@@ -75,16 +75,18 @@ function kuyruklaIsle(fn) {
   return islemKuyrugu;
 }
 
-function mesajPlanla(jid, text, sock) {
-  if (!pending[jid]) pending[jid] = { texts: [], timer: null };
+function mesajPlanla(jid, text, sock, displayNumber) {
+  if (!pending[jid]) pending[jid] = { texts: [], timer: null, displayNumber };
   pending[jid].texts.push(text);
+  pending[jid].displayNumber = displayNumber; // en guncel bilgiyi tut
   if (pending[jid].timer) clearTimeout(pending[jid].timer);
   pending[jid].timer = setTimeout(() => {
     const texts = pending[jid].texts.splice(0);
+    const dn = pending[jid].displayNumber;
     pending[jid].timer = null;
     if (texts.length === 0) return;
     const birlesik = texts.join(' ').trim();
-    kuyruklaIsle(() => islemGoster(sock, jid, birlesik));
+    kuyruklaIsle(() => islemGoster(sock, jid, birlesik, dn));
   }, MESAJ_BEKLEME_MS);
 }
 
@@ -204,7 +206,7 @@ function isCancelWord(text) {
 // Bir musterinin biriken mesajini isler: gorsel gonderir, Claude'a sorar,
 // siparis JSON'unu yakalar, cevabi WhatsApp'a gonderir.
 // ---------------------------------------------------------------------------
-async function islemGoster(sock, jid, birlesikMetin) {
+async function islemGoster(sock, jid, birlesikMetin, displayNumber) {
   const session = getSession(jid);
 
   if (isCancelWord(birlesikMetin)) {
@@ -253,7 +255,9 @@ async function islemGoster(sock, jid, birlesikMetin) {
     } else {
       const { gecerli, eksikler } = siparisGecerliMi(siparis);
       if (gecerli) {
-        await telegramGonder(siparis, jid.split('@')[0]);
+        // Telegram bildirimine gercek telefon numarasini yaz (LID degil).
+        // WhatsApp mesaji ise her zaman ayni "jid"e (LID olsa bile) gider.
+        await telegramGonder(siparis, displayNumber || jid.split('@')[0]);
         resetSession(jid); // siparis tamamlandi, sonraki mesaj yeni bir siparis gibi baslasin
       } else {
         console.error('SİPARİŞ EKSİK ALANla GELDİ:', eksikler.join(', '));
@@ -387,13 +391,41 @@ async function startBot() {
       if (msg.key.remoteJid?.endsWith('@g.us')) continue;
       if (msg.key.remoteJid === 'status@broadcast') continue;
 
-      let jid = msg.key.remoteJid;
-      if (jid.endsWith('@lid') && sock.signalRepository) {
-        try {
-          const lidData = await sock.signalRepository.lidMapping?.getJidForLid?.(jid);
-          if (lidData) jid = lidData;
-        } catch (e) {
-          // yoksay
+      // -----------------------------------------------------------------
+      // KRITIK DUZELTME:
+      // Onceki kod, @lid ile gelen mesajlari sock.signalRepository ile
+      // @s.whatsapp.net'e "ceviriyor" ve TUM sonraki islemleri (oturum,
+      // gorsel gonderme, Claude cevabi) bu CEVRILMIS jid uzerinden
+      // yapiyordu. Bu tam olarak "loglarda/Claude'da basarili ama
+      // WhatsApp ekraninda gorunmuyor" hatasinin sebebi: kullanicinin
+      // telefonundaki sohbet penceresi @lid kimligi altinda aciliyor,
+      // bot ise cevabi FARKLI bir JID'e (@s.whatsapp.net) gonderiyor -
+      // bu ya hic var olmayan/baska bir sohbete gidiyor ya da hedef
+      // JID icin kurulu bir Signal session olmadigi icin mesaj
+      // sessizce dusuyor (Baileys "gonderildi" der ama alici gormuyor).
+      //
+      // DOGRU DAVRANIS: mesaj hangi jid'den geldiyse (LID de olsa),
+      // yanit AYNI jid'e gonderilmeli. Baileys/WhatsApp bu jid'i zaten
+      // dogru sohbetle eslestirir.
+      // -----------------------------------------------------------------
+      const jid = msg.key.remoteJid;
+
+      // Sadece GORUNTULEME amacli (Telegram bildirimindeki "WhatsApp No"
+      // alani) gercek telefon numarasini cozmeye calis. Bu deger ASLA
+      // sendMessage'a verilmez.
+      let displayNumber = jid.split('@')[0];
+      if (jid.endsWith('@lid')) {
+        // remoteJidAlt cogunlukla @lid mesajlarinda telefon JID'ini tasir.
+        const alt = msg.key.remoteJidAlt;
+        if (alt) {
+          displayNumber = alt.split('@')[0];
+        } else if (sock.signalRepository?.lidMapping) {
+          try {
+            const eslenen = await sock.signalRepository.lidMapping.getPNForLID?.(jid);
+            if (eslenen) displayNumber = eslenen.split('@')[0];
+          } catch (e) {
+            // yoksay - sadece bilgi amacli, kritik degil
+          }
         }
       }
 
@@ -405,7 +437,7 @@ async function startBot() {
 
       if (!text) continue;
 
-      mesajPlanla(jid, text, sock);
+      mesajPlanla(jid, text, sock, displayNumber);
     }
   });
 }
