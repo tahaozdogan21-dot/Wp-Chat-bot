@@ -275,7 +275,12 @@ async function insanGibiGonder(sock, jid, text) {
     // yoksay
   }
   await rastgeleBekle(1, 3);
-  await sock.sendMessage(jid, { text });
+  try {
+    const sonuc = await sock.sendMessage(jid, { text });
+    console.log('-> sendMessage SONUC, JID:', jid, 'MessageID:', sonuc?.key?.id, 'Status:', sonuc?.status);
+  } catch (err) {
+    console.error('!! sendMessage HATASI, JID:', jid, 'Hata:', err?.message, err?.stack);
+  }
   await sock.sendPresenceUpdate('paused', jid).catch(() => {});
 }
 
