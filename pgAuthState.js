@@ -37,6 +37,31 @@ async function removeData(id) {
   await pool.query('DELETE FROM whatsapp_session WHERE id = $1', [id]);
 }
 
+// ---------------------------------------------------------------------------
+// KRITIK DUZELTME - YAZMA KUYRUGU:
+// Baileys, ozellikle baglanti/oturum kurulumu sirasinda keys.set() ve
+// saveCreds() cagrilarini birbirini beklemeden (await etmeden) art arda,
+// hatta yer yer es zamanli tetikleyebilir. Her cagri TUM keys/creds blobunu
+// Postgres'e yaziyor oldugundan, ag gecikmesi yuzunden yazmalar cagri
+// sirasindan farkli bir sirada TAMAMLANABILIR: daha ESKI bir cagrinin yazmasi,
+// daha YENI bir cagrinin yazmasindan SONRA veritabanina ulasip onu ezebilir.
+//
+// Sonuc: bazi session/pre-key/lid-mapping kayitlari sessizce kaybolur,
+// Baileys sifreleme oturumunu tam kuramaz -> mesajlar "PENDING"de sonsuza
+// kadar kalir, hicbir hata firlamadan.
+//
+// Cozum: her yazmayi bir zincire (queue) baglamak, boylece bir yazma
+// baslamadan onceki yazmanin veritabaninda TAMAMEN bittigi garanti edilir.
+// Bu, "islemKuyrugu" (index.js) ile ayni desendir.
+// ---------------------------------------------------------------------------
+let yazmaKuyrugu = Promise.resolve();
+function kuyruklaYaz(fn) {
+  yazmaKuyrugu = yazmaKuyrugu.then(fn).catch((err) => {
+    console.error('!! Auth yazma kuyrugu hatasi:', err?.message, err?.stack);
+  });
+  return yazmaKuyrugu;
+}
+
 // Baileys'in useMultiFileAuthState fonksiyonuyla ayni sekli dondurur,
 // ama dosya sistemine degil Postgres'e okuyup yazar.
 async function usePostgresAuthState() {
@@ -58,6 +83,7 @@ async function usePostgresAuthState() {
           return data;
         },
         set: async (data) => {
+          // Hafizadaki mutasyon hemen (senkron) yapilir; asil yazma kuyruga alinir.
           for (const category in data) {
             keys[category] = keys[category] || {};
             for (const id in data[category]) {
@@ -69,16 +95,21 @@ async function usePostgresAuthState() {
               }
             }
           }
-          await writeData('keys', keys);
+          // keys referansi kuyruk icinde de aynidir; kuyruk sayesinde bu
+          // yazmanin veritabanina ULASMASI, kendisinden once kuyruga giren
+          // TUM yazmalar bitmeden gerceklesemez - boylece sira garanti edilir.
+          await kuyruklaYaz(() => writeData('keys', keys));
         },
       },
     },
     saveCreds: async () => {
-      await writeData('creds', creds);
+      await kuyruklaYaz(() => writeData('creds', creds));
     },
     clearSession: async () => {
-      await removeData('creds');
-      await removeData('keys');
+      await kuyruklaYaz(async () => {
+        await removeData('creds');
+        await removeData('keys');
+      });
     },
   };
 }
