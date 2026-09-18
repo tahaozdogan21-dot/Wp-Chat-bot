@@ -122,7 +122,7 @@ async function urunGorselleriGonder(sock, jid, kodlar) {
       continue;
     }
     try {
-      await sock.sendMessage(jid, { image: fs.readFileSync(yol) });
+      await sock.sendMessage(jid, { image: fs.readFileSync(yol) }, { remoteJid: jid });
     } catch (err) {
       console.error('Gorsel gonderilemedi:', kod, err.message);
     }
@@ -271,7 +271,7 @@ async function insanGibiGonder(sock, jid, text) {
     // yoksay
   }
   await rastgeleBekle(1, 3);
-  await sock.sendMessage(jid, { text });
+  await sock.sendMessage(jid, { text }, { remoteJid: jid });
   await sock.sendPresenceUpdate('paused', jid).catch(() => {});
 }
 
