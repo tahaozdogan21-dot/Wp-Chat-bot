@@ -256,7 +256,7 @@ async function islemGoster(sock, jid, birlesikMetin) {
         await telegramGonder(siparis, jid.split('@')[0]);
         resetSession(jid); // siparis tamamlandi, sonraki mesaj yeni bir siparis gibi baslasin
       } else {
-        console.error('SİPARİŞ EKSİK ALANLA GELDİ:', eksikler.join(', '));
+        console.error('SİPARİŞ EKSİK ALANla GELDİ:', eksikler.join(', '));
         await telegramGonderHam('⚠️ EKSİK ALAN(LAR): ' + eksikler.join(', ') + '\n\n' + JSON.stringify(siparis, null, 2));
       }
     }
@@ -387,7 +387,8 @@ async function startBot() {
       if (msg.key.remoteJid?.endsWith('@g.us')) continue;
       if (msg.key.remoteJid === 'status@broadcast') continue;
 
-      const jid = msg.key.remoteJid;
+      // LID yerine varsa gerçek telefon JID'sini (remoteJidAlt) kullanıyoruz
+      const jid = msg.key.remoteJidAlt || msg.key.remoteJid;
       const text =
         msg.message.conversation ||
         msg.message.extendedTextMessage?.text ||
